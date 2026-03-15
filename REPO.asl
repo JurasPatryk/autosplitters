@@ -1,14 +1,15 @@
-state("REPO") 
+state("REPO")
 {
-    
 }
 
 startup
 {
-    vars.Watch = (Action<string>)(key => { if(vars.Helper[key].Changed) vars.Log(key + ": " + vars.Helper[key].Old + " -> " + vars.Helper[key].Current); });
     Assembly.Load(File.ReadAllBytes("Components/asl-help")).CreateInstance("Unity");
     vars.Helper.GameName = "R.E.P.O.";
+    vars.Helper.UnityVersion = new Version(2022, 3);
     vars.Helper.AlertLoadless();
+
+    settings.Add("debugLog", false, "Enable Debug Logging");
 
     settings.Add("tutorialSplits", true, "Split on completing Tutorial Stage");
     settings.Add("tut1", false, "Move", "tutorialSplits");
@@ -36,125 +37,205 @@ startup
 
     settings.Add("levelSplit", true, "Split on completing a Level");
     settings.Add("everyNLevels", true, "Split every n levels (Every 1 Level is on by default)", "levelSplit");
-    for (var i = 1; i <= 10; i += 1)
-    {
-        bool shouldBeDefault = (i == 1);
-        settings.Add("nLevel_" + i, shouldBeDefault, i + " Levels", "everyNLevels");
-    }
+    for (var i = 1; i <= 10; i++)
+        settings.Add("nLevel_" + i, i == 1, i + " Levels", "everyNLevels");
 
     settings.Add("specificLevels", true, "Split after specific levels", "levelSplit");
-    for (var i = 1; i <= 200; i += 1)
-    {
+    for (var i = 1; i <= 200; i++)
         settings.Add("specLevel_" + i, false, "Level " + i, "specificLevels");
-    }
 }
+
 init
 {
+    if (settings["debugLog"])
+        print("INIT fired");
+
+    vars.previousLevel = "Main Menu";
+    vars.currencySplits = new List<int>() { 100, 250, 500, 1000, 2000 };
+    vars.daysCompleted = 0;
+    vars.hookReady = false;
+    vars.tryLoadAttempts = 0;
+    vars.pendingStart = false;
+    vars.attachTick = Environment.TickCount;
+    vars.hookDelayMs = 3000;
+
     vars.Helper.TryLoad = (Func<dynamic, bool>)(mono =>
     {
-        vars.previousLevel = "Main Menu";
-        vars.Helper["levelName"] = mono.MakeString("RunManager", "instance", "levelCurrent", "NarrativeName");
-        vars.Helper["levelsCompleted"] = mono.Make<int>("RunManager", "instance", "levelsCompleted");
-        vars.Helper["tutorialStage"] = mono.Make<int>("TutorialDirector", "instance", "currentPage");
-        vars.Helper["state"] = mono.Make<int>("GameDirector", "instance", "currentState");
-        vars.Helper["currency"] = mono.Make<int>("CurrencyUI", "instance", "currentHaulValue");
+        if (Environment.TickCount - vars.attachTick < vars.hookDelayMs)
+            return false;
 
-        return true;
+        vars.tryLoadAttempts++;
+        if (settings["debugLog"])
+            print("TryLoad attempt #" + vars.tryLoadAttempts);
+
+        try
+        {
+            var state = mono.Make<int>("GameDirector", "instance", "currentState");
+            if (settings["debugLog"])
+                print("state ok");
+
+            var levelsCompleted = mono.Make<int>("RunManager", "instance", "levelsCompleted");
+            if (settings["debugLog"])
+                print("levelsCompleted ok");
+
+            var levelName = mono.MakeString("RunManager", "instance", "levelCurrent", "NarrativeName");
+            if (settings["debugLog"])
+                print("levelName ok");
+
+            var tutorialStage = mono.Make<int>("TutorialDirector", "instance", "currentPage");
+            if (settings["debugLog"])
+                print("tutorialStage ok");
+
+            var currency = mono.Make<int>("CurrencyUI", "instance", "currentHaulValue");
+            if (settings["debugLog"])
+                print("currency ok");
+
+            vars.Helper["state"] = state;
+            vars.Helper["levelsCompleted"] = levelsCompleted;
+            vars.Helper["levelName"] = levelName;
+            vars.Helper["tutorialStage"] = tutorialStage;
+            vars.Helper["currency"] = currency;
+
+            vars.hookReady = true;
+            if (settings["debugLog"])
+                print("TryLoad success");
+
+            return true;
+        }
+        catch (Exception e)
+        {
+            vars.hookReady = false;
+            if (settings["debugLog"])
+                print("TryLoad failed: " + e.Message);
+
+            return false;
+        }
     });
-    vars.currencySplits = new List<int>(){100, 250, 500, 1000, 2000};
+}
+
+exit
+{
+    if (settings["debugLog"])
+        print("EXIT fired");
+
+    vars.hookReady = false;
+    vars.pendingStart = false;
+    vars.previousLevel = "Main Menu";
+    vars.currencySplits = new List<int>() { 100, 250, 500, 1000, 2000 };
     vars.daysCompleted = 0;
 }
+
 onStart
 {
     vars.daysCompleted = 0;
-    vars.currencySplits = new List<int>(){100, 250, 500, 1000, 2000};
+    vars.pendingStart = false;
+    vars.currencySplits = new List<int>() { 100, 250, 500, 1000, 2000 };
 }
+
 update
 {
-    // Game uses custom level system instead of Unity's built in Scenes
-    if(current.levelName != old.levelName)
+    if (!(vars.hookReady ?? false))
+        return false;
+
+    if (current.levelName != old.levelName)
     {
+        if (current.levelName == "Main Menu" || current.levelName == "Lobby Menu")
+        {
+            vars.pendingStart = false;
+
+            if (settings["debugLog"])
+                print("pendingStart cleared: entered menu");
+        }
+        else if ((old.levelName == "Main Menu" || old.levelName == "Lobby Menu")
+            && current.levelName != "Main Menu"
+            && current.levelName != "Lobby Menu")
+        {
+            vars.pendingStart = true;
+
+            if (settings["debugLog"])
+                print("pendingStart set: " + old.levelName + " -> " + current.levelName);
+        }
+
         vars.previousLevel = old.levelName;
     }
-    print(current.levelsCompleted.ToString());
+
+    return true;
 }
-start 
+
+start
 {
-    // Timer should start only after the loading screen (state changes to 2; Main)
-    if(old.state != 2 && current.state == 2) {
-        // Do not start if the current level is a menu
-        if(current.levelName == "Main Menu" || current.levelName == "Lobby Menu") {
-            return false;
-        }
-        // If coming from a menu (either Main Menu or Lobby Menu), start the timer
-        if(vars.previousLevel == "Main Menu" || vars.previousLevel == "Lobby Menu") {
-            return true;
-        }
+    if (!(vars.hookReady ?? false))
+        return false;
+
+    if (vars.pendingStart
+        && old.state != 2
+        && current.state == 2
+        && current.levelName != "Main Menu"
+        && current.levelName != "Lobby Menu")
+    {
+        vars.pendingStart = false;
+
+        if (settings["debugLog"])
+            print("Start triggered");
+
+        return true;
     }
+
     return false;
 }
 
 split
 {
+    if (!(vars.hookReady ?? false))
+        return false;
+
     // Tutorial splits
-    if(settings["tutorialSplits"])
+    if (settings["tutorialSplits"])
     {
-	if(current.levelName != old.levelName)
-	{
-	    // if going to main menu, and coming from completed tutorial
-            if(current.levelName == "Main Menu") 
+        if (current.levelName != old.levelName)
+        {
+            // If going to main menu, and coming from completed tutorial
+            if (current.levelName == "Main Menu")
             {
-                if(old.levelName == "Tutorial" && current.tutorialStage == 16)
-                {
+                if (old.levelName == "Tutorial" && current.tutorialStage == 16)
                     return true;
-                }
+
                 return false;
             }
-	}
-        if(old.tutorialStage != current.tutorialStage)
+        }
+
+        if (old.tutorialStage != current.tutorialStage)
         {
             // Split on user-selected tutorial stages
-            if(current.tutorialStage >= 1 && current.tutorialStage <= 15)
+            if (current.tutorialStage >= 1 && current.tutorialStage <= 15)
             {
-                if(settings["tut" + current.tutorialStage])
-                {
+                if (settings["tut" + current.tutorialStage])
                     return true;
-                }
             }
         }
     }
 
-    // Only Split if the user has selected levelSplit
-    if(settings["levelSplit"])
+    // Level splits
+    if (settings["levelSplit"])
     {
-        // If level name changes
-        if(current.levelName != old.levelName)
+        if (current.levelName != old.levelName)
         {
-            // if going to main menu, ignore
-            if(current.levelName == "Main Menu") 
-            {
+            if (current.levelName == "Main Menu")
                 return false;
-            }
-            // If we did not come from truck, or shop, check if died as well, Check levelSplits
-            if((old.levelName != "Service Station") && (old.levelName != "Truck")  && (current.levelName != "Disposal Arena"))
+
+            if (old.levelName != "Service Station"
+                && old.levelName != "Truck"
+                && current.levelName != "Disposal Arena")
             {
-                // Split after completing specific level
-                if(settings["specificLevels"] && settings["specLevel_" + current.levelsCompleted])
-                {
+                if (settings["specificLevels"] && settings["specLevel_" + current.levelsCompleted])
                     return true;
-                }
-                // Split every n levels
+
                 if (settings["everyNLevels"])
                 {
-                    for(int i = 1; i <= 10; i++)
+                    for (int i = 1; i <= 10; i++)
                     {
-                        if(settings["nLevel_" + i])
-                        {
-                            if(current.levelsCompleted % i == 0)
-                            {
-                                return true;
-                            }
-                        }
+                        if (settings["nLevel_" + i] && current.levelsCompleted % i == 0)
+                            return true;
                     }
                 }
             }
@@ -162,64 +243,68 @@ split
     }
 
     // Tax splits
-    if(settings["taxSplit"])
+    if (settings["taxSplit"])
     {
-        // Total Earned Amount Changed
-        if(old.currency != current.currency)
+        if (old.currency != current.currency)
         {
-            if(current.currency >= 100 && settings["100"] && vars.currencySplits.Contains(100))
+            if (current.currency >= 100 && settings["100"] && vars.currencySplits.Contains(100))
             {
                 vars.currencySplits.Remove(100);
                 return true;
             }
-            if(current.currency >= 250 && settings["250"] && vars.currencySplits.Contains(250))
+            if (current.currency >= 250 && settings["250"] && vars.currencySplits.Contains(250))
             {
                 vars.currencySplits.Remove(250);
                 return true;
             }
-            if(current.currency >= 500 && settings["500"] && vars.currencySplits.Contains(500))
+            if (current.currency >= 500 && settings["500"] && vars.currencySplits.Contains(500))
             {
                 vars.currencySplits.Remove(500);
                 return true;
             }
-            if(current.currency >= 1000 && settings["1000"] && vars.currencySplits.Contains(1000))
+            if (current.currency >= 1000 && settings["1000"] && vars.currencySplits.Contains(1000))
             {
                 vars.currencySplits.Remove(1000);
                 return true;
             }
-            if(current.currency >= 2000 && settings["2000"] && vars.currencySplits.Contains(2000))
+            if (current.currency >= 2000 && settings["2000"] && vars.currencySplits.Contains(2000))
             {
                 vars.currencySplits.Remove(2000);
                 return true;
             }
-
-            return false;
         }
-        return false;
     }
-    
+
     return false;
-}               
+}
 
 isLoading
 {
-    // State 2 is "Main" state, applicable to Main Menu and actual Gameplay, State 6 is "Death" State
+    if (!(vars.hookReady ?? false))
+        return false;
+
+    // State 2 is "Main" state, applicable to Main Menu and actual Gameplay
+    // State 6 is "Death" State
     return (current.state != 2 && current.state != 6);
 }
+
 reset
 {
-    // Level changed
-    if(current.levelName != old.levelName)
+    if (!(vars.hookReady ?? false))
+        return false;
+
+    if (current.levelName != old.levelName)
     {
-        // Going to Main Menu
-        if(current.levelName == "Main Menu" || current.levelName == "Disposal Arena")
+        if (current.levelName == "Main Menu" || current.levelName == "Disposal Arena")
         {
-            if(old.levelName == "Tutorial" && current.tutorialStage == 16)
-            {
+            vars.pendingStart = false;
+
+            if (old.levelName == "Tutorial" && current.tutorialStage == 16)
                 return false; // Finished Tutorial, don't reset
-            }
+
             return true;
         }
     }
+
     return false;
 }
