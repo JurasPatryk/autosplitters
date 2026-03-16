@@ -9,7 +9,16 @@ startup
     vars.Helper.UnityVersion = new Version(2022, 3);
     vars.Helper.AlertLoadless();
 
-    settings.Add("debugLog", false, "Enable Debug Logging");
+    vars.RunLevels = new HashSet<string>()
+    {
+        "Tutorial",
+        "Museum of Human Art",
+        "Headman Manor",
+        "Swiftbroom Academy",
+        "McJannek Station"
+    };
+
+    //settings.Add("debugLog", true, "Enable Debug Logging");
 
     settings.Add("tutorialSplits", true, "Split on completing Tutorial Stage");
     settings.Add("tut1", false, "Move", "tutorialSplits");
@@ -54,7 +63,7 @@ init
     vars.currencySplits = new List<int>() { 100, 250, 500, 1000, 2000 };
     vars.daysCompleted = 0;
     vars.hookReady = false;
-    vars.tryLoadAttempts = 0;
+    vars.dataReady = false;
     vars.pendingStart = false;
     vars.attachTick = Environment.TickCount;
     vars.hookDelayMs = 3000;
@@ -64,39 +73,17 @@ init
         if (Environment.TickCount - vars.attachTick < vars.hookDelayMs)
             return false;
 
-        vars.tryLoadAttempts++;
-        if (settings["debugLog"])
-            print("TryLoad attempt #" + vars.tryLoadAttempts);
-
         try
         {
-            var state = mono.Make<int>("GameDirector", "instance", "currentState");
-            if (settings["debugLog"])
-                print("state ok");
-
-            var levelsCompleted = mono.Make<int>("RunManager", "instance", "levelsCompleted");
-            if (settings["debugLog"])
-                print("levelsCompleted ok");
-
-            var levelName = mono.MakeString("RunManager", "instance", "levelCurrent", "NarrativeName");
-            if (settings["debugLog"])
-                print("levelName ok");
-
-            var tutorialStage = mono.Make<int>("TutorialDirector", "instance", "currentPage");
-            if (settings["debugLog"])
-                print("tutorialStage ok");
-
-            var currency = mono.Make<int>("CurrencyUI", "instance", "currentHaulValue");
-            if (settings["debugLog"])
-                print("currency ok");
-
-            vars.Helper["state"] = state;
-            vars.Helper["levelsCompleted"] = levelsCompleted;
-            vars.Helper["levelName"] = levelName;
-            vars.Helper["tutorialStage"] = tutorialStage;
-            vars.Helper["currency"] = currency;
+            vars.Helper["state"] = mono.Make<int>("GameDirector", "instance", "currentState");
+            vars.Helper["levelsCompleted"] = mono.Make<int>("RunManager", "instance", "levelsCompleted");
+            vars.Helper["levelName"] = mono.MakeString("RunManager", "instance", "levelCurrent", "NarrativeName");
+            vars.Helper["tutorialStage"] = mono.Make<int>("TutorialDirector", "instance", "currentPage");
+            vars.Helper["currency"] = mono.Make<int>("CurrencyUI", "instance", "currentHaulValue");
 
             vars.hookReady = true;
+            vars.dataReady = false;
+
             if (settings["debugLog"])
                 print("TryLoad success");
 
@@ -105,6 +92,8 @@ init
         catch (Exception e)
         {
             vars.hookReady = false;
+            vars.dataReady = false;
+
             if (settings["debugLog"])
                 print("TryLoad failed: " + e.Message);
 
@@ -119,6 +108,7 @@ exit
         print("EXIT fired");
 
     vars.hookReady = false;
+    vars.dataReady = false;
     vars.pendingStart = false;
     vars.previousLevel = "Main Menu";
     vars.currencySplits = new List<int>() { 100, 250, 500, 1000, 2000 };
@@ -137,26 +127,79 @@ update
     if (!(vars.hookReady ?? false))
         return false;
 
-    if (current.levelName != old.levelName)
-    {
-        if (current.levelName == "Main Menu" || current.levelName == "Lobby Menu")
-        {
-            vars.pendingStart = false;
+    print("UPDATE entered");
 
-            if (settings["debugLog"])
-                print("pendingStart cleared: entered menu");
-        }
-        else if ((old.levelName == "Main Menu" || old.levelName == "Lobby Menu")
-            && current.levelName != "Main Menu"
-            && current.levelName != "Lobby Menu")
+    var currentDict = (IDictionary<string, object>)current;
+    var oldDict = (IDictionary<string, object>)old;
+
+    if (!currentDict.ContainsKey("levelName"))
+    {
+        print("UPDATE EXIT: current missing levelName");
+        return false;
+    }
+
+    if (!currentDict.ContainsKey("state"))
+    {
+        print("UPDATE EXIT: current missing state");
+        return false;
+    }
+
+    bool currentIsMenu = current.levelName == "Main Menu" || current.levelName == "Lobby Menu";
+    bool currentIsRunLevel = vars.RunLevels.Contains((string)current.levelName);
+    bool currentIsSplash = current.levelName == "Splash Screen";
+
+    if (!oldDict.ContainsKey("levelName") || !oldDict.ContainsKey("state"))
+    {
+        print("UPDATE WARN: old data missing, using current tick only");
+
+        if (!vars.pendingStart
+            && currentIsRunLevel
+            && !currentIsSplash
+            && current.state != 2)
         {
             vars.pendingStart = true;
+            print("pendingStart late-set during loading | level=" + current.levelName + " | state=" + current.state);
+        }
 
-            if (settings["debugLog"])
-                print("pendingStart set: " + old.levelName + " -> " + current.levelName);
+        vars.dataReady = true;
+        return true;
+    }
+
+    vars.dataReady = true;
+
+    print("UPDATE DATA READY | level=" + current.levelName
+        + " | oldLevel=" + old.levelName
+        + " | state=" + current.state
+        + " | oldState=" + old.state
+        + " | pendingStart=" + vars.pendingStart
+        + " | runLevel=" + currentIsRunLevel
+        + " | splash=" + currentIsSplash);
+
+    bool oldIsMenu = old.levelName == "Main Menu" || old.levelName == "Lobby Menu";
+
+    if (current.levelName != old.levelName)
+    {
+        if (currentIsMenu)
+        {
+            vars.pendingStart = false;
+            print("pendingStart cleared: entered menu");
+        }
+        else if (currentIsRunLevel && !currentIsSplash && oldIsMenu)
+        {
+            vars.pendingStart = true;
+            print("pendingStart set from menu transition: " + old.levelName + " -> " + current.levelName);
         }
 
         vars.previousLevel = old.levelName;
+    }
+
+    if (!vars.pendingStart
+        && currentIsRunLevel
+        && !currentIsSplash
+        && current.state != 2)
+    {
+        vars.pendingStart = true;
+        print("pendingStart late-set during loading | level=" + current.levelName + " | state=" + current.state);
     }
 
     return true;
@@ -165,19 +208,34 @@ update
 start
 {
     if (!(vars.hookReady ?? false))
+    {
+        print("START EXIT: hookReady false");
         return false;
+    }
+
+    if (!(vars.dataReady ?? false))
+    {
+        print("START EXIT: dataReady false");
+        return false;
+    }
+
+    bool currentIsRunLevel = vars.RunLevels.Contains((string)current.levelName);
+    bool currentIsSplash = current.levelName == "Splash Screen";
+
+    print("START CHECK | pending=" + vars.pendingStart
+        + " | level=" + current.levelName
+        + " | state=" + current.state
+        + " | oldState=" + old.state
+        + " | runLevel=" + currentIsRunLevel
+        + " | splash=" + currentIsSplash);
 
     if (vars.pendingStart
-        && old.state != 2
-        && current.state == 2
-        && current.levelName != "Main Menu"
-        && current.levelName != "Lobby Menu")
+        && currentIsRunLevel
+        && !currentIsSplash
+        && current.state == 2)
     {
         vars.pendingStart = false;
-
-        if (settings["debugLog"])
-            print("Start triggered");
-
+        print("Start triggered");
         return true;
     }
 
@@ -186,7 +244,7 @@ start
 
 split
 {
-    if (!(vars.hookReady ?? false))
+    if (!(vars.hookReady ?? false) || !(vars.dataReady ?? false))
         return false;
 
     // Tutorial splits
@@ -194,7 +252,6 @@ split
     {
         if (current.levelName != old.levelName)
         {
-            // If going to main menu, and coming from completed tutorial
             if (current.levelName == "Main Menu")
             {
                 if (old.levelName == "Tutorial" && current.tutorialStage == 16)
@@ -206,7 +263,6 @@ split
 
         if (old.tutorialStage != current.tutorialStage)
         {
-            // Split on user-selected tutorial stages
             if (current.tutorialStage >= 1 && current.tutorialStage <= 15)
             {
                 if (settings["tut" + current.tutorialStage])
@@ -280,17 +336,15 @@ split
 
 isLoading
 {
-    if (!(vars.hookReady ?? false))
+    if (!(vars.hookReady ?? false) || !(vars.dataReady ?? false))
         return false;
 
-    // State 2 is "Main" state, applicable to Main Menu and actual Gameplay
-    // State 6 is "Death" State
     return (current.state != 2 && current.state != 6);
 }
 
 reset
 {
-    if (!(vars.hookReady ?? false))
+    if (!(vars.hookReady ?? false) || !(vars.dataReady ?? false))
         return false;
 
     if (current.levelName != old.levelName)
@@ -299,8 +353,11 @@ reset
         {
             vars.pendingStart = false;
 
+            if (settings["debugLog"])
+                print("RESET: returned to menu/disposal");
+
             if (old.levelName == "Tutorial" && current.tutorialStage == 16)
-                return false; // Finished Tutorial, don't reset
+                return false;
 
             return true;
         }
