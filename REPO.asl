@@ -9,6 +9,8 @@ startup
     vars.Helper.UnityVersion = new Version(2022, 3);
     vars.Helper.AlertLoadless();
 
+    vars.debugLog = false;
+
     vars.RunLevels = new HashSet<string>()
     {
         "Tutorial",
@@ -17,8 +19,6 @@ startup
         "Swiftbroom Academy",
         "McJannek Station"
     };
-
-    //settings.Add("debugLog", true, "Enable Debug Logging");
 
     settings.Add("tutorialSplits", true, "Split on completing Tutorial Stage");
     settings.Add("tut1", false, "Move", "tutorialSplits");
@@ -56,7 +56,7 @@ startup
 
 init
 {
-    if (settings["debugLog"])
+    if (vars.debugLog ?? false)
         print("INIT fired");
 
     vars.previousLevel = "Main Menu";
@@ -84,7 +84,7 @@ init
             vars.hookReady = true;
             vars.dataReady = false;
 
-            if (settings["debugLog"])
+            if (vars.debugLog ?? false)
                 print("TryLoad success");
 
             return true;
@@ -94,7 +94,7 @@ init
             vars.hookReady = false;
             vars.dataReady = false;
 
-            if (settings["debugLog"])
+            if (vars.debugLog ?? false)
                 print("TryLoad failed: " + e.Message);
 
             return false;
@@ -104,7 +104,7 @@ init
 
 exit
 {
-    if (settings["debugLog"])
+    if (vars.debugLog ?? false)
         print("EXIT fired");
 
     vars.hookReady = false;
@@ -127,20 +127,23 @@ update
     if (!(vars.hookReady ?? false))
         return false;
 
-    print("UPDATE entered");
+    if (vars.debugLog ?? false)
+        print("UPDATE entered");
 
     var currentDict = (IDictionary<string, object>)current;
     var oldDict = (IDictionary<string, object>)old;
 
     if (!currentDict.ContainsKey("levelName"))
     {
-        print("UPDATE EXIT: current missing levelName");
+        if (vars.debugLog ?? false)
+            print("UPDATE EXIT: current missing levelName");
         return false;
     }
 
     if (!currentDict.ContainsKey("state"))
     {
-        print("UPDATE EXIT: current missing state");
+        if (vars.debugLog ?? false)
+            print("UPDATE EXIT: current missing state");
         return false;
     }
 
@@ -150,7 +153,8 @@ update
 
     if (!oldDict.ContainsKey("levelName") || !oldDict.ContainsKey("state"))
     {
-        print("UPDATE WARN: old data missing, using current tick only");
+        if (vars.debugLog ?? false)
+            print("UPDATE WARN: old data missing, using current tick only");
 
         if (!vars.pendingStart
             && currentIsRunLevel
@@ -158,7 +162,8 @@ update
             && current.state != 2)
         {
             vars.pendingStart = true;
-            print("pendingStart late-set during loading | level=" + current.levelName + " | state=" + current.state);
+            if (vars.debugLog ?? false)
+                print("pendingStart late-set during loading | level=" + current.levelName + " | state=" + current.state);
         }
 
         vars.dataReady = true;
@@ -167,13 +172,16 @@ update
 
     vars.dataReady = true;
 
-    print("UPDATE DATA READY | level=" + current.levelName
-        + " | oldLevel=" + old.levelName
-        + " | state=" + current.state
-        + " | oldState=" + old.state
-        + " | pendingStart=" + vars.pendingStart
-        + " | runLevel=" + currentIsRunLevel
-        + " | splash=" + currentIsSplash);
+    if (vars.debugLog ?? false)
+    {
+        print("UPDATE DATA READY | level=" + current.levelName
+            + " | oldLevel=" + old.levelName
+            + " | state=" + current.state
+            + " | oldState=" + old.state
+            + " | pendingStart=" + vars.pendingStart
+            + " | runLevel=" + currentIsRunLevel
+            + " | splash=" + currentIsSplash);
+    }
 
     bool oldIsMenu = old.levelName == "Main Menu" || old.levelName == "Lobby Menu";
 
@@ -182,12 +190,14 @@ update
         if (currentIsMenu)
         {
             vars.pendingStart = false;
-            print("pendingStart cleared: entered menu");
+            if (vars.debugLog ?? false)
+                print("pendingStart cleared: entered menu");
         }
         else if (currentIsRunLevel && !currentIsSplash && oldIsMenu)
         {
             vars.pendingStart = true;
-            print("pendingStart set from menu transition: " + old.levelName + " -> " + current.levelName);
+            if (vars.debugLog ?? false)
+                print("pendingStart set from menu transition: " + old.levelName + " -> " + current.levelName);
         }
 
         vars.previousLevel = old.levelName;
@@ -199,7 +209,8 @@ update
         && current.state != 2)
     {
         vars.pendingStart = true;
-        print("pendingStart late-set during loading | level=" + current.levelName + " | state=" + current.state);
+        if (vars.debugLog ?? false)
+            print("pendingStart late-set during loading | level=" + current.levelName + " | state=" + current.state);
     }
 
     return true;
@@ -209,25 +220,30 @@ start
 {
     if (!(vars.hookReady ?? false))
     {
-        print("START EXIT: hookReady false");
+        if (vars.debugLog ?? false)
+            print("START EXIT: hookReady false");
         return false;
     }
 
     if (!(vars.dataReady ?? false))
     {
-        print("START EXIT: dataReady false");
+        if (vars.debugLog ?? false)
+            print("START EXIT: dataReady false");
         return false;
     }
 
     bool currentIsRunLevel = vars.RunLevels.Contains((string)current.levelName);
     bool currentIsSplash = current.levelName == "Splash Screen";
 
-    print("START CHECK | pending=" + vars.pendingStart
-        + " | level=" + current.levelName
-        + " | state=" + current.state
-        + " | oldState=" + old.state
-        + " | runLevel=" + currentIsRunLevel
-        + " | splash=" + currentIsSplash);
+    if (vars.debugLog ?? false)
+    {
+        print("START CHECK | pending=" + vars.pendingStart
+            + " | level=" + current.levelName
+            + " | state=" + current.state
+            + " | oldState=" + old.state
+            + " | runLevel=" + currentIsRunLevel
+            + " | splash=" + currentIsSplash);
+    }
 
     if (vars.pendingStart
         && currentIsRunLevel
@@ -235,7 +251,8 @@ start
         && current.state == 2)
     {
         vars.pendingStart = false;
-        print("Start triggered");
+        if (vars.debugLog ?? false)
+            print("Start triggered");
         return true;
     }
 
@@ -353,7 +370,7 @@ reset
         {
             vars.pendingStart = false;
 
-            if (settings["debugLog"])
+            if (vars.debugLog ?? false)
                 print("RESET: returned to menu/disposal");
 
             if (old.levelName == "Tutorial" && current.tutorialStage == 16)
